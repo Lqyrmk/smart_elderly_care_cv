@@ -15,9 +15,11 @@ import pandas as pd
 import os
 import time
 import logging
+import torch
 from PIL import Image, ImageDraw, ImageFont
 
 # Dlib 正向人脸检测器 / Use frontal face detector of Dlib
+
 detector = dlib.get_frontal_face_detector()
 
 # Dlib 人脸 landmark 特征点检测器 / Get face landmarks
@@ -72,9 +74,13 @@ class Face_Recognizer:
     # 计算两个128D向量间的欧式距离 / Compute the e-distance between two 128D features
     @staticmethod
     def return_euclidean_distance(feature_1, feature_2):
+        # feature_1 = torch.tensor(feature_1)
+        # feature_2 = torch.tensor(feature_2)
+        # dist = ((torch.pow((feature_1 - feature_2), 2)).sum()).sqrt()
         feature_1 = np.array(feature_1)
         feature_2 = np.array(feature_2)
         dist = np.sqrt(np.sum(np.square(feature_1 - feature_2)))
+        time2=time.time()
         return dist
 
     # 更新 FPS / Update FPS of Video stream
@@ -126,7 +132,13 @@ class Face_Recognizer:
                 self.frame_cnt += 1
                 logging.debug("Frame %d starts", self.frame_cnt)
                 flag, img_rd = stream.read()
+
+                t1 = time.time()
                 faces = detector(img_rd, 0)
+                t2 = time.time()
+                t = t2 - t1
+                print(t)
+
                 kk = cv2.waitKey(1)
                 # 按下 q 键退出 / Press 'q' to quit
                 if kk == ord('q'):
@@ -205,8 +217,8 @@ class Face_Recognizer:
 
     # OpenCV 调用摄像头并进行 process
     def run(self):
-        cap = cv2.VideoCapture("video.mp4")  # Get video stream from video file
-        # cap = cv2.VideoCapture(0)              # Get video stream from camera
+        # cap = cv2.VideoCapture("video.mp4")  # Get video stream from video file
+        cap = cv2.VideoCapture(0)              # Get video stream from camera
         cap.set(3, 480)                        # 640x480
         self.process(cap)
 

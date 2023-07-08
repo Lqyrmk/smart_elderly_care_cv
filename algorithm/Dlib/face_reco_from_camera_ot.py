@@ -1,15 +1,3 @@
-# Copyright (C) 2018-2021 coneypo
-# SPDX-License-Identifier: MIT
-
-# Author:   coneypo
-# Blog:     http://www.cnblogs.com/AdaminXie
-# GitHub:   https://github.com/coneypo/Dlib_face_recognition_from_camera
-# Mail:     coneypo@foxmail.com
-
-# 利用 OT 人脸追踪, 进行人脸实时识别 / Real-time face detection and recognition via OT for multi faces
-# 检测 -> 识别人脸, 新人脸出现 -> 不需要识别, 而是利用质心追踪来判断识别结果 / Do detection -> recognize face, new face -> not do re-recognition
-# 人脸进行再识别需要花费大量时间, 这里用 OT 做跟踪 / Do re-recognition for multi faces will cost much time, OT will be used to instead it
-
 import dlib
 import numpy as np
 import cv2
@@ -17,19 +5,26 @@ import os
 import pandas as pd
 import time
 import logging
+import torch
+from algorithm.emotionKNN.detect import emotion
+
+# 使用pytorch框架进行GPU加速
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Dlib 正向人脸检测器 / Use frontal face detector of Dlib
 detector = dlib.get_frontal_face_detector()
 
 # Dlib 人脸 landmark 特征点检测器 / Get face landmarks
-predictor = dlib.shape_predictor('data/data_dlib/shape_predictor_68_face_landmarks.dat')
+predictor = dlib.shape_predictor('algorithm/Dlib/data/data_dlib/shape_predictor_68_face_landmarks.dat')
 
 # Dlib Resnet 人脸识别模型, 提取 128D 的特征矢量 / Use Dlib resnet50 model to get 128D face descriptor
-face_reco_model = dlib.face_recognition_model_v1("data/data_dlib/dlib_face_recognition_resnet_model_v1.dat")
+face_reco_model = dlib.face_recognition_model_v1(
+    "algorithm/Dlib/data/data_dlib/dlib_face_recognition_resnet_model_v1.dat")
 
 
 class Face_Recognizer:
     def __init__(self):
+        self.detect_img = cv2.imread("tip.jpg")
         self.font = cv2.FONT_ITALIC
 
         # FPS
@@ -38,6 +33,7 @@ class Face_Recognizer:
         self.fps = 0
         self.fps_show = 0
         self.start_time = time.time()
+        self.emo = {}
 
         # cnt for frame
         self.frame_cnt = 0
@@ -77,8 +73,8 @@ class Face_Recognizer:
 
     # 从 "features_all.csv" 读取录入人脸特征 / Get known faces from "features_all.csv"
     def get_face_database(self):
-        if os.path.exists("data/features_all.csv"):
-            path_features_known_csv = "data/features_all.csv"
+        if os.path.exists("algorithm/Dlib/data/features_all.csv"):
+            path_features_known_csv = "algorithm/Dlib/data/features_all.csv"
             csv_rd = pd.read_csv(path_features_known_csv, header=None)
             for i in range(csv_rd.shape[0]):
                 features_someone_arr = []
@@ -110,9 +106,10 @@ class Face_Recognizer:
     @staticmethod
     # 计算两个128D向量间的欧式距离 / Compute the e-distance between two 128D features
     def return_euclidean_distance(feature_1, feature_2):
-        feature_1 = np.array(feature_1)
-        feature_2 = np.array(feature_2)
-        dist = np.sqrt(np.sum(np.square(feature_1 - feature_2)))
+
+        feature_1 = torch.tensor(feature_1)
+        feature_2 = torch.tensor(feature_2)
+        dist = ((torch.pow((feature_1 - feature_2), 2)).sum()).sqrt()
         return dist
 
     # 使用质心追踪来识别人脸 / Use centroid tracker to link face_x in current frame with person_x in last frame
@@ -144,7 +141,7 @@ class Face_Recognizer:
         cv2.putText(img_rd, "Q: Quit", (20, 450), self.font, 0.8, (255, 255, 255), 1, cv2.LINE_AA)
 
         for i in range(len(self.current_frame_face_name_list)):
-            img_rd = cv2.putText(img_rd, "Face_" + str(i + 1), tuple(
+            img_rd = cv2.putText(img_rd, "Face_" + str(i + 1) + ": " + self.emo[i], tuple(
                 [int(self.current_frame_face_centroid_list[i][0]), int(self.current_frame_face_centroid_list[i][1])]),
                                  self.font,
                                  0.8, (255, 190, 0),
@@ -168,6 +165,40 @@ class Face_Recognizer:
                 self.last_frame_face_cnt = self.current_frame_face_cnt
                 self.current_frame_face_cnt = len(faces)
 
+                # 将人脸图像切割，进行情绪识别
+                # 存放预测结果
+                self.emo = {}
+                num = 0
+                for k, d in enumerate(faces):
+
+                    # 计算矩形大小
+                    # (x,y), (宽度width, 高度height)
+                    pos_start = tuple([d.left(), d.top()])
+                    pos_end = tuple([d.right(), d.bottom()])
+
+                    # 计算矩形框大小
+                    height = d.bottom() - d.top()
+                    width = d.right() - d.left()
+
+                    img_height, img_width, _ = img_rd.shape
+
+                    # 根据人脸大小生成空的图像
+                    img_blank = np.zeros((height, width, 3), np.uint8)
+
+                    for i in range(height):
+                        for j in range(width):
+                            # 检查当前坐标是否超出图像范围
+                            if (d.top() + i) >= 0 and (d.top() + i) < img_height and (d.left() + j) >= 0 and (
+                                    d.left() + j) < img_width:
+                                img_blank[i][j] = img_rd[d.top() + i][d.left() + j]
+                            else:
+                                img_blank[i][j] = 0
+                    self.emo[num] = emotion(img_blank)
+                    # print(emotion(img_blank))
+                    # cv2.imwrite("face/img_face_" + str(k + 1) + ".jpg", img_blank)
+                    num += 1
+                    # cv2.imshow("face_"+str(k+1), img_blank)
+
                 # 4. 更新上一帧中的人脸列表 / Update the face name list in last frame
                 self.last_frame_face_name_list = self.current_frame_face_name_list[:]
 
@@ -178,7 +209,8 @@ class Face_Recognizer:
                 # 6.1 如果当前帧和上一帧人脸数没有变化 / if cnt not changes
                 if (self.current_frame_face_cnt == self.last_frame_face_cnt) and (
                         self.reclassify_interval_cnt != self.reclassify_interval):
-                    logging.debug("scene 1: 当前帧和上一帧相比没有发生人脸数变化 / No face cnt changes in this frame!!!")
+                    logging.debug \
+                        ("scene 1: 当前帧和上一帧相比没有发生人脸数变化 / No face cnt changes in this frame!!!")
 
                     self.current_frame_face_position_list = []
 
@@ -225,7 +257,8 @@ class Face_Recognizer:
                         self.current_frame_face_name_list = []
                     # 6.2.2 人脸数增加 / Face cnt increase: 0->1, 0->2, ..., 1->2, ...
                     else:
-                        logging.debug("  scene 2.2 出现人脸, 进行人脸识别 / Get faces in this frame and do face recognition")
+                        logging.debug \
+                            ("  scene 2.2 出现人脸, 进行人脸识别 / Get faces in this frame and do face recognition")
                         self.current_frame_face_name_list = []
                         for i in range(len(faces)):
                             shape = predictor(img_rd, faces[i])
@@ -273,7 +306,6 @@ class Face_Recognizer:
 
                         # 7. 生成的窗口添加说明文字 / Add note on cv2 window
                         self.draw_note(img_rd)
-
                         # cv2.imwrite("debug/debug_" + str(self.frame_cnt) + ".png", img_rd) # Dump current frame image if needed
 
                 # 8. 按下 'q' 键退出 / Press 'q' to exit
@@ -281,26 +313,25 @@ class Face_Recognizer:
                     break
 
                 self.update_fps()
-                cv2.namedWindow("camera", 1)
-                cv2.imshow("camera", img_rd)
-
+                # cv2.namedWindow("camera", 1)
+                self.detect_img = img_rd
                 logging.debug("Frame ends\n\n")
+#     def run(self):
+#         cap = cv2.VideoCapture(".data/test/test.mp4")  # Get video stream from video file
+#         # cap = cv2.VideoCapture(0)              # Get video stream from camera
+#         self.process(cap)
+#
+#         cap.release()
+#         cv2.destroyAllWindows()
 
-    def run(self):
-        cap = cv2.VideoCapture(".data/test/test.mp4")  # Get video stream from video file
-        # cap = cv2.VideoCapture(0)              # Get video stream from camera
-        self.process(cap)
-
-        cap.release()
-        cv2.destroyAllWindows()
-
-
-def main():
-    # logging.basicConfig(level=logging.DEBUG) # Set log level to 'logging.DEBUG' to print debug info of every frame
-    logging.basicConfig(level=logging.INFO)
-    Face_Recognizer_con = Face_Recognizer()
-    Face_Recognizer_con.run()
+#
+#
+# def main():
+# # logging.basicConfig(level=logging.DEBUG) # Set log level to 'logging.DEBUG' to print debug info of every frame
+# logging.basicConfig(level=logging.INFO)
+# Face_Recognizer_con = Face_Recognizer()
+# Face_Recognizer_con.run()
 
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()
