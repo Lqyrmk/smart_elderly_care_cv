@@ -9,10 +9,10 @@ import os
 import logging
 
 # 配置COS区域和密钥信息
-secret_id = 'AKIDfFrRuCIG3MURAeKq9E7qLgokW7UefZKb'
-secret_key = 'AJJI9vXxLgtvmV2NTRGtjMo6C5j8LNHz'
-bucket = 'cos-lqyrmk-1312783534'
-region = 'ap-beijing'         # 指定的 COS 地域
+secret_id = ''
+secret_key = ''
+bucket = ''
+region = ''         # 指定的 COS 地域
 token = None            # 如果使用永久密钥建议设置 Token
 scheme = 'https'        # 指定使用 https 协议来访问 COS
 config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key, Token=token, Scheme=scheme)
